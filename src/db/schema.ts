@@ -1,13 +1,40 @@
-import { pgTable, serial, text, timestamp } from 'drizzle-orm/pg-core';
+import { integer, jsonb, pgEnum, pgTable, serial, text, timestamp } from 'drizzle-orm/pg-core';
+import type { InferSelectModel, InferInsertModel } from 'drizzle-orm';
 
-// Define the 'demo_users' table
-export const demoUsers = pgTable('demo_users', {
+export const matchStatusEnum = pgEnum('match_status', ['scheduled', 'live', 'finished']);
+
+export const matches = pgTable('matches', {
   id: serial('id').primaryKey(),
-  name: text('name').notNull(),
-  email: text('email').notNull().unique(),
-  createdAt: timestamp('created_at').defaultNow().notNull(),
-});
+  sport: text('sport').notNull(),
+  homeTeam: text('home_team').notNull(),
+  awayTeam: text('away_team').notNull(),
+  status: matchStatusEnum('status').notNull().default('scheduled'),
+  startTime: timestamp('start_time').notNull(),
+  endTime: timestamp('end_time'),
+  homeScore: integer('home_score').notNull().default(0),
+  awayScore: integer('away_score').notNull().default(0),
+  createdAt: timestamp('created_at').notNull().defaultNow()
+})
 
-// Export types for type-safe queries
-export type User = typeof demoUsers.$inferSelect;
-export type NewUser = typeof demoUsers.$inferInsert;
+
+export const commentary = pgTable('commentary', {
+  id: serial('id').primaryKey(),
+  matchId: integer('match_id').notNull().references(() => matches.id),
+  minute: integer('minute'),
+  sequence: integer('sequence'),
+  period: text('period'),
+  eventType: text('event_type'),
+  actor: text('actor'),
+  team: text('team'),
+  message: text('message').notNull(),
+  metadata: jsonb('metadata'),
+  tags: text('tags').array(),
+  createdAt: timestamp('created_at').notNull().defaultNow()
+})
+
+// TypeScript types
+export type Match = InferSelectModel<typeof matches>;
+export type NewMatch = InferInsertModel<typeof matches>;
+
+export type Commentary = InferSelectModel<typeof commentary>;
+export type NewCommentary = InferInsertModel<typeof commentary>;
