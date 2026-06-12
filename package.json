@@ -9,7 +9,8 @@
   "scripts": {
     "dev": "tsx watch ./src/server.ts",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate"
+    "db:migrate": "drizzle-kit migrate",
+    "seed": "tsx ./src/seed/seed.ts"
   },
   "devDependencies": {
     "@types/pg": "^8.20.0",

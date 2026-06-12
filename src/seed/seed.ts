@@ -1,5 +1,7 @@
 import "dotenv/config";
 import fs from "fs/promises";
+import { sql } from "drizzle-orm";
+import { db, pool } from "../db/db.js";
 
 const DELAY_MS = Number.parseInt(process.env.DELAY_MS || "250", 10);
 const NEW_MATCH_DELAY_MIN_MS = 2000;
@@ -479,8 +481,15 @@ function randomMatchDelay(): number {
   return NEW_MATCH_DELAY_MIN_MS + Math.floor(Math.random() * (range + 1));
 }
 
+async function cleanupDatabase(): Promise<void> {
+  await db.execute(sql`TRUNCATE TABLE commentary, matches RESTART IDENTITY CASCADE`);
+  console.log("🧹 Cleared existing matches and commentary");
+}
+
 async function seed(): Promise<void> {
   console.log(`📡 Seeding via API: ${API_URL}`);
+
+  await cleanupDatabase();
 
   const { feed, matches: seedMatches } = await loadSeedData();
   const matchesList = await fetchMatches();
@@ -558,7 +567,11 @@ async function seed(): Promise<void> {
   }
 }
 
-seed().catch((err) => {
-  console.error("❌ Seed error:", err);
-  process.exit(1);
-});
+seed()
+  .catch((err) => {
+    console.error("❌ Seed error:", err);
+    process.exitCode = 1;
+  })
+  .finally(() => {
+    void pool.end();
+  });
