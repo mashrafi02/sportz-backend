@@ -13,6 +13,7 @@
   },
   "devDependencies": {
     "@types/pg": "^8.20.0",
+    "@types/ws": "^8.18.1",
     "drizzle-kit": "^0.31.10",
     "tsx": "^4.21.0",
     "typescript": "^6.0.3"
@@ -24,6 +25,7 @@
     "drizzle-orm": "^0.45.2",
     "express": "^5.2.1",
     "pg": "^8.20.0",
+    "ws": "^8.21.0",
     "zod": "^4.4.3"
   }
 }

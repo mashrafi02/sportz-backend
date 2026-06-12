@@ -55,6 +55,10 @@ router.post('/', async (req: Request<object, object, CreateMatchInput>, res: Res
             awayScore: awayScore ?? 0,
         }).returning();
 
+        if(res.app.locals.broadcastMatchCreated) {
+            res.app.locals.broadcastMatchCreated(event);
+        }
+
         return res.status(201).json({ message: 'Match created successfully', match: event });
     } catch (error) {
         return res.status(500).json({ error: 'Failed to create match', details: JSON.stringify(error) });
