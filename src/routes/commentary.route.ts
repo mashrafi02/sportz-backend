@@ -63,6 +63,10 @@ commentaryRouter.post('/', async (req: Request<MatchIdParamInput, object, Create
             matchId: parsedParams.data.id,
         }).returning();
 
+        if (res.app.locals.broadcastCommentary) {
+            res.app.locals.broadcastCommentary(entry?.matchId, entry);
+        }
+
         return res.status(201).json({ message: 'Commentary created successfully', commentary: entry });
     } catch (error) {
         return res.status(500).json({ error: 'Failed to create commentary', details: JSON.stringify(error) });
