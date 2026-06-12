@@ -1,6 +1,7 @@
 import express from 'express';
 import type { Request, Response } from 'express';
 import matchesRouter from './routes/matches.route.js';
+import commentaryRouter from './routes/commentary.route.js';
 import http from 'http';
 import { attachWebSocketServer } from './ws/server.js';
 import { securityMiddleware } from './arcjet.js';
@@ -24,6 +25,7 @@ app.get('/', (req: Request, res: Response) => {
 app.use(securityMiddleware());
 
 app.use('/matches', matchesRouter);
+app.use('/matches/:id/commentary', commentaryRouter);
 
 
 // Attach WebSocket server
