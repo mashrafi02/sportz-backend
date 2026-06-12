@@ -19,6 +19,8 @@
     "typescript": "^6.0.3"
   },
   "dependencies": {
+    "@arcjet/inspect": "^1.5.0",
+    "@arcjet/node": "^1.5.0",
     "@types/dotenv": "^6.1.1",
     "@types/express": "^5.0.6",
     "dotenv": "^17.4.2",

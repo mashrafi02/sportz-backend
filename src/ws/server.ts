@@ -1,5 +1,7 @@
 import { WebSocket, WebSocketServer } from 'ws';
-import type { Server as HTTPServer } from 'http';
+import type { Server as HTTPServer, IncomingMessage } from 'http';
+import type { Socket } from 'net';
+import { wsArcjet } from '../arcjet.js';
 
 type AliveWebSocket = WebSocket & { isAlive: boolean };
 
@@ -24,9 +26,45 @@ interface WebSocketServerResult {
     broadcastMatchCreated: (match: unknown) => void;
 }
 
+function rejectUpgrade(socket: Socket, status: number, message: string): void {
+    socket.write(`HTTP/1.1 ${status} ${message}\r\nConnection: close\r\n\r\n`);
+    socket.destroy();
+}
+
 export function attachWebSocketServer(server: HTTPServer): WebSocketServerResult {
 
-    const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 1024 * 1024 });
+    const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
+
+    server.on('upgrade', async (req: IncomingMessage, socket: Socket, head: Buffer) => {
+
+        if (req.url !== '/ws') {
+            socket.destroy();
+            return;
+        }
+
+        if (wsArcjet) {
+            try {
+                const descision = await wsArcjet.protect(req);
+
+                if (descision.isDenied()) {
+                    if (descision.reason.isRateLimit()) {
+                        rejectUpgrade(socket, 429, "Too Many Requests");
+                    } else {
+                        rejectUpgrade(socket, 403, "Forbidden");
+                    }
+                    return;
+                }
+            } catch (error) {
+                console.error("WS upgrade error", error);
+                rejectUpgrade(socket, 500, "Internal Server Error");
+                return;
+            }
+        }
+
+        wss.handleUpgrade(req, socket, head, (ws) => {
+            wss.emit('connection', ws, req);
+        });
+    });
 
     wss.on('connection', (socket: AliveWebSocket) => {
 
