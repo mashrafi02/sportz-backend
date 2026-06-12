@@ -4,7 +4,12 @@ import type { Server as HTTPServer, IncomingMessage } from 'http';
 import type { Socket } from 'net';
 import { wsArcjet } from '../arcjet.js';
 
-type AliveWebSocket = WebSocket & { isAlive: boolean; subscriptions: Set<number> };
+type AliveWebSocket = WebSocket & {
+    isAlive: boolean;
+    subscriptions: Set<number>;
+    messageCount: number;
+    messageWindowStart: number;
+};
 
 interface WebSocketServerResult {
     broadcastMatchCreated: (match: unknown) => void;
@@ -12,6 +17,24 @@ interface WebSocketServerResult {
 }
 
 const matchSubscribers = new Map<number, Set<AliveWebSocket>>();
+
+const WS_MESSAGE_RATE_LIMIT = 20;
+const WS_MESSAGE_RATE_WINDOW_MS = 10_000;
+
+// Tracks per-socket message rate, resetting the window once it elapses.
+// Returns true once the socket has exceeded its allowance for the current window.
+function isRateLimited(socket: AliveWebSocket): boolean {
+    const now = Date.now();
+
+    if (now - socket.messageWindowStart >= WS_MESSAGE_RATE_WINDOW_MS) {
+        socket.messageWindowStart = now;
+        socket.messageCount = 0;
+    }
+
+    socket.messageCount += 1;
+
+    return socket.messageCount > WS_MESSAGE_RATE_LIMIT;
+}
 
 // Adds a socket to the set of subscribers for a match
 function subscribe(matchId: number, socket: AliveWebSocket): void {
@@ -90,6 +113,13 @@ function broadcastToMatch(matchId: number, payload: Record<string, unknown>): vo
 
 // Parses an incoming client message and handles subscribe/unsubscribe requests
 function handleMessage(socket: AliveWebSocket, data: RawData): void {
+    if (isRateLimited(socket)) {
+        if (socket.messageCount === WS_MESSAGE_RATE_LIMIT + 1) {
+            sendJson(socket, { type: 'error', message: 'Too many messages, slow down' });
+        }
+        return;
+    }
+
     let message: { type?: unknown; matchId?: unknown };
 
     try {
@@ -159,6 +189,8 @@ export function attachWebSocketServer(server: HTTPServer): WebSocketServerResult
         socket.on('pong', () => { socket.isAlive = true; });
 
         socket.subscriptions = new Set();
+        socket.messageCount = 0;
+        socket.messageWindowStart = Date.now();
 
         sendJson(socket, { type: 'welcome', message: 'Welcome to the WebSocket server!' });
 

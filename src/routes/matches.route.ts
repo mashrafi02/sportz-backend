@@ -32,7 +32,8 @@ router.get('/', async (req: Request<object, object, object, ListMatchesQueryInpu
     return res.json({ matches: data });
     
   } catch (error) {
-    return res.status(500).json({ error: 'Failed to fetch matches', details: JSON.stringify(error) });
+    console.error('Failed to fetch matches:', error);
+    return res.status(500).json({ error: 'Failed to fetch matches' });
   }
 });
 
@@ -61,7 +62,8 @@ router.post('/', async (req: Request<object, object, CreateMatchInput>, res: Res
 
         return res.status(201).json({ message: 'Match created successfully', match: event });
     } catch (error) {
-        return res.status(500).json({ error: 'Failed to create match', details: JSON.stringify(error) });
+        console.error('Failed to create match:', error);
+        return res.status(500).json({ error: 'Failed to create match' });
     }
 });
 

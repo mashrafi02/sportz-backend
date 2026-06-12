@@ -17,12 +17,12 @@ const server = http.createServer(app);
 // Middleware to parse JSON
 app.use(express.json());
 
+app.use(securityMiddleware());
+
 // Root route
 app.get('/', (req: Request, res: Response) => {
   res.send('Welcome to the Sportz API!');
 });
-
-app.use(securityMiddleware());
 
 app.use('/matches', matchesRouter);
 app.use('/matches/:id/commentary', commentaryRouter);

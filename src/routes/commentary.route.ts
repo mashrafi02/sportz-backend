@@ -40,7 +40,8 @@ commentaryRouter.get('/', async (req: Request<MatchIdParamInput, object, object,
 
         return res.json({ commentary: data });
     } catch (error) {
-        return res.status(500).json({ error: 'Failed to fetch commentary', details: JSON.stringify(error) });
+        console.error('Failed to fetch commentary:', error);
+        return res.status(500).json({ error: 'Failed to fetch commentary' });
     }
 });
 
@@ -69,7 +70,8 @@ commentaryRouter.post('/', async (req: Request<MatchIdParamInput, object, Create
 
         return res.status(201).json({ message: 'Commentary created successfully', commentary: entry });
     } catch (error) {
-        return res.status(500).json({ error: 'Failed to create commentary', details: JSON.stringify(error) });
+        console.error('Failed to create commentary:', error);
+        return res.status(500).json({ error: 'Failed to create commentary' });
     }
 });
 
