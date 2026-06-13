@@ -14,6 +14,7 @@ type AliveWebSocket = WebSocket & {
 interface WebSocketServerResult {
     broadcastMatchCreated: (match: unknown) => void;
     broadcastCommentary: (matchId: number, commentary: unknown) => void;
+    broadcastMatchUpdated: (match: unknown) => void;
 }
 
 const matchSubscribers = new Map<number, Set<AliveWebSocket>>();
@@ -228,5 +229,10 @@ export function attachWebSocketServer(server: HTTPServer): WebSocketServerResult
         broadcastToMatch(matchId, { type: 'commentary_update', data: commentary });
     }
 
-    return { broadcastMatchCreated, broadcastCommentary };
+    // Notifies all connected clients that a match was updated (e.g. score change)
+    function broadcastMatchUpdated(match: unknown): void {
+        broadcastToAll(wss, { type: 'match_updated', data: match });
+    }
+
+    return { broadcastMatchCreated, broadcastCommentary, broadcastMatchUpdated };
 }

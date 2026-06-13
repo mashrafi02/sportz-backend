@@ -8,6 +8,13 @@
       "when": 1780118070160,
       "tag": "0000_magenta_mentor",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1781326381057,
+      "tag": "0001_windy_jack_flag",
+      "breakpoints": true
     }
   ]
 }

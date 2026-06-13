@@ -13,6 +13,7 @@ const DEFAULT_MATCH_DURATION_MINUTES = Number.parseInt(
 const FORCE_LIVE =
   process.env.SEED_FORCE_LIVE !== "0" &&
   process.env.SEED_FORCE_LIVE !== "false";
+const LIVE_MATCH_RATIO = Number.parseFloat(process.env.SEED_LIVE_RATIO || "0.66");
 const API_URL = process.env.API_URL;
 if (!API_URL) {
   throw new Error("API_URL is required to seed via REST endpoints.");
@@ -31,6 +32,7 @@ interface CommentaryEntry {
   message?: string | undefined;
   metadata?: Record<string, unknown> | undefined;
   tags?: string[] | undefined;
+  scoreDelta?: { home?: number; away?: number } | undefined;
 }
 
 interface CommentaryRecord {
@@ -56,8 +58,8 @@ interface MatchRecord {
   status?: string | undefined;
   startTime: string;
   endTime?: string | undefined;
-  homeScore?: number | undefined;
-  awayScore?: number | undefined;
+  homeScore?: string | undefined;
+  awayScore?: string | undefined;
   createdAt?: string | undefined;
 }
 
@@ -77,10 +79,26 @@ interface SeedData {
   matches: SeedMatch[];
 }
 
+type Side = "home" | "away";
+
+interface MatchScoreState {
+  home: number;
+  away: number;
+  homeWickets: number;
+  awayWickets: number;
+  /** Cricket: tracks which side is currently batting. */
+  cricketBattingSide: Side | null;
+  cricketStarted: { home: boolean; away: boolean };
+  /** Football: caps the total goals each side can score so totals stay realistic. */
+  footballGoalTarget: { home: number; away: number };
+  footballGoalsScored: { home: number; away: number };
+}
+
 interface MatchMapEntry {
   match: MatchRecord;
-  score: { home: number; away: number };
-  fakeNext: "home" | "away";
+  score: MatchScoreState;
+  /** Number of feed entries still to be processed for this match. */
+  remainingEntries: number;
 }
 
 interface TeamMatch {
@@ -133,50 +151,46 @@ function parseDate(value: string | undefined): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-function isLiveMatch(match: MatchRecord): boolean {
-  const start = parseDate(match.startTime);
-  const end = parseDate(match.endTime);
-  if (!start || !end) {
-    return false;
-  }
-  const now = new Date();
-  return now >= start && now < end;
-}
-
 function buildMatchTimes(seedMatch: SeedMatch): { startTime: string; endTime: string } {
   const now = new Date();
   const durationMs = DEFAULT_MATCH_DURATION_MINUTES * 60 * 1000;
 
-  let start = parseDate(seedMatch.startTime);
-  let end = parseDate(seedMatch.endTime);
+  if (!FORCE_LIVE) {
+    let start = parseDate(seedMatch.startTime);
+    let end = parseDate(seedMatch.endTime);
 
-  if (!start && !end) {
-    start = new Date(now.getTime() - 5 * 60 * 1000);
-    end = new Date(start.getTime() + durationMs);
-  } else {
-    if (start && !end) {
-      end = new Date(start.getTime() + durationMs);
-    }
-    if (!start && end) {
-      start = new Date(end.getTime() - durationMs);
-    }
-  }
-
-  if (FORCE_LIVE && start && end) {
-    if (!(now >= start && now < end)) {
+    if (!start && !end) {
       start = new Date(now.getTime() - 5 * 60 * 1000);
       end = new Date(start.getTime() + durationMs);
+    } else {
+      if (start && !end) {
+        end = new Date(start.getTime() + durationMs);
+      }
+      if (!start && end) {
+        start = new Date(end.getTime() - durationMs);
+      }
     }
+
+    if (!start || !end) {
+      throw new Error("Seed match must include valid startTime and endTime.");
+    }
+
+    return { startTime: start.toISOString(), endTime: end.toISOString() };
   }
 
-  if (!start || !end) {
-    throw new Error("Seed match must include valid startTime and endTime.");
+  // Distribute matches between "currently live" and "starting soon" so the
+  // demo shows a realistic mix of statuses regardless of when it's seeded.
+  if (Math.random() < LIVE_MATCH_RATIO) {
+    const elapsedMs = Math.floor(Math.random() * durationMs * 0.8);
+    const start = new Date(now.getTime() - elapsedMs);
+    const end = new Date(start.getTime() + durationMs);
+    return { startTime: start.toISOString(), endTime: end.toISOString() };
   }
 
-  return {
-    startTime: start.toISOString(),
-    endTime: end.toISOString(),
-  };
+  const upcomingDelayMs = (15 + Math.random() * 165) * 60 * 1000; // 15min - 3h from now
+  const start = new Date(now.getTime() + upcomingDelayMs);
+  const end = new Date(start.getTime() + durationMs);
+  return { startTime: start.toISOString(), endTime: end.toISOString() };
 }
 
 async function createMatch(seedMatch: SeedMatch): Promise<MatchRecord> {
@@ -191,8 +205,8 @@ async function createMatch(seedMatch: SeedMatch): Promise<MatchRecord> {
       awayTeam: seedMatch.awayTeam,
       startTime,
       endTime,
-      homeScore: seedMatch.homeScore ?? 0,
-      awayScore: seedMatch.awayScore ?? 0,
+      homeScore: String(seedMatch.homeScore ?? 0),
+      awayScore: String(seedMatch.awayScore ?? 0),
     }),
   });
   if (!response.ok) {
@@ -200,6 +214,187 @@ async function createMatch(seedMatch: SeedMatch): Promise<MatchRecord> {
   }
   const responsePayload = (await response.json()) as { match: MatchRecord };
   return responsePayload.match;
+}
+
+/** Realistic total-goal counts for a football match, weighted toward low-scoring results. */
+const FOOTBALL_GOAL_TOTALS = [0, 1, 1, 2, 2, 2, 3, 3, 4, 5];
+
+function createScoreState(): MatchScoreState {
+  const total = FOOTBALL_GOAL_TOTALS[Math.floor(Math.random() * FOOTBALL_GOAL_TOTALS.length)] ?? 2;
+  let home = 0;
+  for (let i = 0; i < total; i += 1) {
+    if (Math.random() < 0.5) home += 1;
+  }
+  return {
+    home: 0,
+    away: 0,
+    homeWickets: 0,
+    awayWickets: 0,
+    cricketBattingSide: null,
+    cricketStarted: { home: false, away: false },
+    footballGoalTarget: { home, away: total - home },
+    footballGoalsScored: { home: 0, away: 0 },
+  };
+}
+
+/** Maps a commentary entry's team name to "home"/"away", or null if it doesn't match either side. */
+function teamSide(match: MatchRecord, teamName: string | undefined): Side | null {
+  if (!teamName) {
+    return null;
+  }
+  if (teamName === match.homeTeam) {
+    return "home";
+  }
+  if (teamName === match.awayTeam) {
+    return "away";
+  }
+  return null;
+}
+
+function scoreDeltaMagnitude(entry: CommentaryEntry): number {
+  const delta = entry.scoreDelta;
+  if (!delta) {
+    return 0;
+  }
+  return delta.home || delta.away || 0;
+}
+
+/**
+ * Applies a commentary entry's effect to a match's running score.
+ *
+ * - Cricket: only the currently-batting side accrues runs/wickets; the other
+ *   side stays "yet to bat" until its innings begins (innings rank toggles
+ *   the batting side).
+ * - Football: goals are capped at a per-match realistic total and randomly
+ *   assigned to a side that hasn't reached its cap yet.
+ * - Basketball: scoring entries add their points directly to the side named
+ *   in the commentary.
+ *
+ * Returns true if the score changed and should be persisted/broadcast.
+ */
+function applyScoreFromEntry(target: MatchMapEntry, entry: CommentaryEntry): boolean {
+  const sport = target.match.sport.toLowerCase();
+  const score = target.score;
+  let changed = false;
+
+  if (sport === "cricket") {
+    if (score.cricketBattingSide === null) {
+      score.cricketBattingSide = teamSide(target.match, entry.team) ?? "home";
+    }
+
+    let battingSide: Side | null = score.cricketBattingSide;
+    const battingWicketsKey = battingSide === "home" ? "homeWickets" : "awayWickets";
+
+    // The current side is all out — hand the innings over to the other side
+    // (or stop scoring if both innings are already complete).
+    if (score[battingWicketsKey] >= 10) {
+      const otherSide: Side = battingSide === "home" ? "away" : "home";
+      const otherWicketsKey = otherSide === "home" ? "homeWickets" : "awayWickets";
+      if (score[otherWicketsKey] < 10) {
+        score.cricketBattingSide = otherSide;
+        battingSide = otherSide;
+      } else {
+        battingSide = null;
+      }
+    }
+
+    if (battingSide && !score.cricketStarted[battingSide]) {
+      score.cricketStarted[battingSide] = true;
+      changed = true;
+    }
+
+    const magnitude = scoreDeltaMagnitude(entry);
+    if (battingSide && magnitude !== 0) {
+      score[battingSide] += magnitude;
+      changed = true;
+    }
+
+    if (entry.eventType === "wicket" && battingSide) {
+      const wicketsKey = battingSide === "home" ? "homeWickets" : "awayWickets";
+      if (score[wicketsKey] < 10) {
+        score[wicketsKey] += 1;
+        changed = true;
+      }
+    }
+  } else if (sport === "football") {
+    if (entry.eventType === "goal") {
+      const magnitude = scoreDeltaMagnitude(entry) || 1;
+      const sides: Side[] = Math.random() < 0.5 ? ["home", "away"] : ["away", "home"];
+      for (const side of sides) {
+        if (score.footballGoalsScored[side] < score.footballGoalTarget[side]) {
+          score[side] += magnitude;
+          score.footballGoalsScored[side] += 1;
+          changed = true;
+          break;
+        }
+      }
+    }
+  } else if (sport === "basketball") {
+    if (entry.eventType === "basket" || entry.eventType === "three") {
+      const side = teamSide(target.match, entry.team);
+      const magnitude = scoreDeltaMagnitude(entry);
+      if (side && magnitude !== 0) {
+        score[side] += magnitude;
+        changed = true;
+      }
+    }
+  }
+
+  return changed;
+}
+
+/** Formats a match's running score for display: plain numbers, or "runs/wickets"/"Yet to bat" for cricket. */
+function formatScores(target: MatchMapEntry): { home: string; away: string } {
+  const sport = target.match.sport.toLowerCase();
+  const score = target.score;
+
+  if (sport === "cricket") {
+    const home = score.cricketStarted.home ? `${score.home}/${Math.min(score.homeWickets, 10)}` : "Yet to bat";
+    const away = score.cricketStarted.away ? `${score.away}/${Math.min(score.awayWickets, 10)}` : "Yet to bat";
+    return { home, away };
+  }
+
+  return { home: String(score.home), away: String(score.away) };
+}
+
+/** Parses a formatted score back into a comparable number (cricket runs, or the raw integer). */
+function parseScoreValue(sport: string, score: string): number {
+  if (sport.toLowerCase() === "cricket") {
+    if (score.toLowerCase() === "yet to bat") {
+      return 0;
+    }
+    return Number.parseInt(score.split("/")[0] ?? "0", 10) || 0;
+  }
+  return Number.parseInt(score, 10) || 0;
+}
+
+/** Describes a finished match's final score and winner for logging. */
+function describeResult(match: MatchRecord, scores: { home: string; away: string }): string {
+  const home = parseScoreValue(match.sport, scores.home);
+  const away = parseScoreValue(match.sport, scores.away);
+  const scoreline = `${match.homeTeam} ${scores.home} - ${scores.away} ${match.awayTeam}`;
+  if (home === away) {
+    return `${scoreline} (Draw)`;
+  }
+  const winner = home > away ? match.homeTeam : match.awayTeam;
+  return `${scoreline} (${winner} won)`;
+}
+
+interface MatchUpdatePayload {
+  homeScore?: string;
+  awayScore?: string;
+  status?: string;
+}
+
+async function updateMatch(matchId: number, payload: MatchUpdatePayload): Promise<void> {
+  const response = await fetch(`${API_URL}/matches/${matchId}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to update match: ${response.status}`);
+  }
 }
 
 async function insertCommentary(matchId: number, entry: CommentaryEntry): Promise<CommentaryRecord> {
@@ -497,7 +692,7 @@ async function seed(): Promise<void> {
   const matchMap = new Map<number, MatchMapEntry>();
   const matchKeyMap = new Map<string, MatchRecord>();
   for (const match of matchesList) {
-    if (FORCE_LIVE && !isLiveMatch(match)) {
+    if (FORCE_LIVE && match.status !== "live") {
       continue;
     }
     const key = `${match.sport}|${match.homeTeam}|${match.awayTeam}`;
@@ -506,8 +701,8 @@ async function seed(): Promise<void> {
     }
     matchMap.set(match.id, {
       match,
-      score: { home: match.homeScore ?? 0, away: match.awayScore ?? 0 },
-      fakeNext: Math.random() < 0.5 ? "home" : "away",
+      score: createScoreState(),
+      remainingEntries: 0,
     });
   }
 
@@ -515,7 +710,7 @@ async function seed(): Promise<void> {
     for (const seedMatch of seedMatches) {
       const key = `${seedMatch.sport}|${seedMatch.homeTeam}|${seedMatch.awayTeam}`;
       let match = matchKeyMap.get(key);
-      if (!match || (FORCE_LIVE && !isLiveMatch(match))) {
+      if (!match || (FORCE_LIVE && match.status !== "live")) {
         match = await createMatch(seedMatch);
         matchKeyMap.set(key, match);
         const delayMs = randomMatchDelay();
@@ -524,8 +719,8 @@ async function seed(): Promise<void> {
 
       const mapEntry: MatchMapEntry = {
         match,
-        score: { home: match.homeScore ?? 0, away: match.awayScore ?? 0 },
-        fakeNext: Math.random() < 0.5 ? "home" : "away",
+        score: createScoreState(),
+        remainingEntries: 0,
       };
 
       if (typeof seedMatch.id === "number" && Number.isInteger(seedMatch.id)) {
@@ -541,6 +736,15 @@ async function seed(): Promise<void> {
 
   const expandedFeed = expandFeedForMatches(feed, seedMatches);
   const randomizedFeed = buildRandomizedFeed(expandedFeed, matchMap);
+
+  // Pre-count how many feed entries each live match will receive, so we know
+  // when a match's story is "complete" and can be marked finished.
+  for (const entry of randomizedFeed) {
+    const target = getMatchEntry(entry, matchMap);
+    if (target && target.match.status === "live") {
+      target.remainingEntries += 1;
+    }
+  }
 
   for (let i = 0; i < randomizedFeed.length; i += 1) {
     const entry = randomizedFeed[i];
@@ -558,8 +762,40 @@ async function seed(): Promise<void> {
     }
     const match = target.match;
 
+    if (match.status !== "live") {
+      // Don't seed commentary for matches that haven't started yet.
+      continue;
+    }
+
     const row = await insertCommentary(match.id, entry);
     console.log(`📣 [Match ${match.id}] ${row.message}`);
+
+    let scoreChanged = applyScoreFromEntry(target, entry);
+    target.remainingEntries -= 1;
+    const isLastEntry = target.remainingEntries <= 0;
+
+    // Basketball games don't end in a tie - settle a draw with a late buzzer-beater.
+    if (isLastEntry && match.sport.toLowerCase() === "basketball" && target.score.home === target.score.away) {
+      const winner: Side = Math.random() < 0.5 ? "home" : "away";
+      target.score[winner] += Math.random() < 0.5 ? 2 : 3;
+      scoreChanged = true;
+    }
+
+    if (scoreChanged || isLastEntry) {
+      const scores = formatScores(target);
+      const payload: MatchUpdatePayload = { homeScore: scores.home, awayScore: scores.away };
+      if (isLastEntry) {
+        payload.status = "finished";
+      }
+      await updateMatch(match.id, payload);
+
+      if (scoreChanged) {
+        console.log(`🔢 [Match ${match.id}] ${match.homeTeam} ${scores.home} - ${scores.away} ${match.awayTeam}`);
+      }
+      if (isLastEntry) {
+        console.log(`🏁 [Match ${match.id}] Finished: ${describeResult(match, scores)}`);
+      }
+    }
 
     if (DELAY_MS > 0) {
       await new Promise((resolve) => setTimeout(resolve, DELAY_MS));

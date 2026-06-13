@@ -12,9 +12,24 @@ export const MATCH_STATUS = {
   FINISHED: 'finished',
 } as const;
 
+export type MatchStatusValue = (typeof MATCH_STATUS)[keyof typeof MATCH_STATUS];
+
+/** Derives a match's status from its start/end times relative to now. */
+export function computeMatchStatus(startTime: Date, endTime: Date | null, now: Date = new Date()): MatchStatusValue {
+  if (endTime && now >= endTime) {
+    return MATCH_STATUS.FINISHED;
+  }
+  if (now >= startTime) {
+    return MATCH_STATUS.LIVE;
+  }
+  return MATCH_STATUS.SCHEDULED;
+}
+
 export const matchIdParamSchema = z.object({
   id: z.coerce.number().int().positive(),
 });
+
+const scoreSchema = z.string().trim().min(1).max(20);
 
 export const createMatchSchema = z
   .object({
@@ -31,8 +46,8 @@ export const createMatchSchema = z
       .refine((value) => isoDateTimeSchema.safeParse(value).success, {
         message: 'endTime must be a valid ISO date string',
       }),
-    homeScore: z.coerce.number().int().nonnegative().optional(),
-    awayScore: z.coerce.number().int().nonnegative().optional(),
+    homeScore: scoreSchema.optional(),
+    awayScore: scoreSchema.optional(),
   })
   .superRefine(({ startTime, endTime }, ctx) => {
     const start = new Date(startTime).getTime();
@@ -46,3 +61,16 @@ export const createMatchSchema = z
       });
     }
   });
+
+export const updateMatchSchema = z
+  .object({
+    homeScore: scoreSchema.optional(),
+    awayScore: scoreSchema.optional(),
+    status: z.enum([MATCH_STATUS.SCHEDULED, MATCH_STATUS.LIVE, MATCH_STATUS.FINISHED]).optional(),
+  })
+  .refine(
+    (data) => data.homeScore !== undefined || data.awayScore !== undefined || data.status !== undefined,
+    {
+      message: 'At least one of homeScore, awayScore or status must be provided',
+    },
+  );
