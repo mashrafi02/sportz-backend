@@ -15,6 +15,10 @@ const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:3000';
 const app = express();
 const server = http.createServer(app);
 
+// Render (and most PaaS) sit behind a reverse proxy — trust X-Forwarded-For
+// so req.ip reflects the real client IP for Arcjet's fingerprinting.
+app.set('trust proxy', true);
+
 // Middleware to parse JSON
 app.use(express.json());
 
