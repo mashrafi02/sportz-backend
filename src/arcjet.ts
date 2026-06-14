@@ -7,9 +7,15 @@ const isDevelopment = process.env.ARCJET_ENV === "development";
 
 if (!arcjetKey) throw new Error("ARCJET_KEY is not defined in environment variables");
 
-export const httpArcjet = arcjetKey ? 
+// Render (and similar PaaS) proxy requests to the app over the loopback
+// interface, so the real client IP only arrives via X-Forwarded-For. Trust
+// the local proxy so Arcjet reads that header instead of socket.remoteAddress.
+const trustedProxies = ['127.0.0.1', '::1'];
+
+export const httpArcjet = arcjetKey ?
     arcjet({
         key: arcjetKey,
+        proxies: trustedProxies,
         rules: [
             shield({ mode: arcjetMode }),
             detectBot({
@@ -26,9 +32,10 @@ export const httpArcjet = arcjetKey ?
         ]
     }) : null;
 
-export const wsArcjet = arcjetKey ? 
+export const wsArcjet = arcjetKey ?
     arcjet({
         key: arcjetKey,
+        proxies: trustedProxies,
         rules: [
             shield({ mode: arcjetMode }),
             detectBot({
